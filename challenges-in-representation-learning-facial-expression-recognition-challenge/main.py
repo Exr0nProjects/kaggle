@@ -1,19 +1,20 @@
 # first time using pytorch from scratch, so be nice
+# https://pytorch.org/tutorials/beginner/blitz/cifar10_tutorial.html
 DATAPATH = "data/train.csv"
 DATA_CLASSES = ( 'angry', 'disgusted', 'afraid', 'happy', 'sad', 'surprised', 'neutral' )
 
 # from matplotlib import pyplot as plt
 import torch
-from torch import nn
+from torch import nn, optim
 from torch.nn import functional as F
 from tqdm import tqdm
 
 import csv
 
-
 def load_data():
     # NTFS: could probably use torchvision.dataloader but meh
-    data = [[]] * len(DATA_CLASSES)
+    data_by_class = [[]] * len(DATA_CLASSES)
+    data = []
     print('loading data...')
     with open(DATAPATH, 'r') as rf:
         lines = sum(1 for _ in rf)
@@ -26,11 +27,12 @@ def load_data():
             # print(img)
             # plt.imshow(img)
             # plt.show()
-            data[cls].append(img)
+            data_by_class[cls].append(img)
+            data.append([cls, img])
 
-    print([(DATA_CLASSES[i], len(data[i])) for i in range(len(DATA_CLASSES))]) # TODO: dataset is extremely unbalanced
+    print([(DATA_CLASSES[i], len(data_by_class[i])) for i in range(len(DATA_CLASSES))]) # TODO: dataset is extremely unbalanced
 
-    return data
+    return data_by_class
 
 class Net(nn.Module):
     def __init__(self):
@@ -57,3 +59,19 @@ if __name__ == '__main__':
 
     net = Net()
     print(net)
+    print(f'parameter count: {len(list(net.parameters()))}')
+
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.Adam(net.parameters(), lr=0.001)
+
+    for epoch in range(2):
+        running_loss = 0.               # TODO: nanny
+        for i, samp in enumerate(data):
+            cls, img = samp
+            onehot = [int(i == cls) for i in range(7)]
+            print(onehot)
+
+            optimizer.zero_grad()
+
+            got = net(img)
+            loss = criterion(got, onehot)
