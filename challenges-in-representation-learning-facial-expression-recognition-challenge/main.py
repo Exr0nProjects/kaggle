@@ -3,6 +3,7 @@
 DATAPATH = "data/train.csv"
 DATA_CLASSES = ( 'angry', 'disgusted', 'afraid', 'happy', 'sad', 'surprised', 'neutral' )
 EPOCHS = 2
+BATCH_SIZE = 10
 
 # from matplotlib import pyplot as plt
 import torch
@@ -10,30 +11,50 @@ from torch import nn, optim
 from torch.nn import functional as F
 from tqdm import tqdm
 
-import csv
+import csv, pickle
+from pathlib import Path
+from itertools import zip_longest
+
+def grouper(n, iterable):
+    bad = []
+    for i in iterable:
+        bad.append(i)
+        if len(bad) == n:
+            yield bad
+            bad = []
+    yield bad
 
 def load_data():
-    # NTFS: could probably use torchvision.dataloader but meh
-    data_by_class = [[]] * len(DATA_CLASSES)
-    data = []
-    print('loading data...')
-    with open(DATAPATH, 'r') as rf:
-        lines = sum(1 for _ in rf)
-    with open(DATAPATH, 'r') as rf:
-        for line in tqdm(csv.DictReader(rf), total=lines):
-            cls = int(line['emotion']) # unsafe
-            img = torch.tensor([int(p) for p in line['pixels'].split()],
-                    dtype=torch.float32).reshape((48, 48))
-            img /= 256                  # normalize
-            # print(img)
-            # plt.imshow(img)
-            # plt.show()
-            data_by_class[cls].append(img)
-            data.append([cls, img])
+    if Path(DATAPATH+'.pkl').exists():
+        print('found cached data; loading it...')
+        with open(DATAPATH+'.pkl', 'rb') as rf:
+            data = pickle.load(rf)
+    else:
+        # NTFS: could probably use torchvision.dataloader but meh
+        data_by_class = [[]] * len(DATA_CLASSES)
+        data = [[], []]
+        print('loading data...')
+        with open(DATAPATH, 'r') as rf:
+            lines = sum(1 for _ in rf)
+        with open(DATAPATH, 'r') as rf:
+            for line in tqdm(csv.DictReader(rf), total=lines):
+                cls = int(line['emotion']) # unsafe
+                img = torch.tensor([int(p) for p in line['pixels'].split()],
+                        dtype=torch.float32).reshape((48, 48))
+                img = torch.unsqueeze(img / 256, 0)            # normalize
+                # print(img)
+                # plt.imshow(img)
+                # plt.show()
+                data_by_class[cls].append(img)
+                data[0].append(img)
+                data[1].append(cls)
 
-    print([(DATA_CLASSES[i], len(data_by_class[i])) for i in range(len(DATA_CLASSES))]) # TODO: dataset is extremely unbalanced
+        print([(DATA_CLASSES[i], len(data_by_class[i])) for i in range(len(DATA_CLASSES))]) # TODO: dataset is extremely unbalanced
+        with open(DATAPATH+'.pkl', 'wb+') as wf:
+            pickle.dump(data, wf)
 
-    return data
+    for batch in zip(grouper(BATCH_SIZE, data[0]), grouper(BATCH_SIZE, data[1])):
+        yield batch
 
 class Net(nn.Module):
     def __init__(self):
@@ -56,11 +77,14 @@ class Net(nn.Module):
 
 if __name__ == '__main__':
     print(f'pytorch version is {torch.__version__}')
-    data = load_data()
+
 
     net = Net()
     print(net)
     print(f'parameter count: {len(list(net.parameters()))}')
+
+    data = list(load_data())
+    print(data)
 
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(net.parameters(), lr=0.001)
@@ -69,7 +93,8 @@ if __name__ == '__main__':
         for epoch in range(EPOCHS):
             running_loss = 0.               # TODO: nanny
             for i, samp in enumerate(data):
-                cls, img = samp
+                print(samp)
+                img, cls = samp
                 onehot = [int(i == cls) for i in range(7)]
                 print(onehot)
 
