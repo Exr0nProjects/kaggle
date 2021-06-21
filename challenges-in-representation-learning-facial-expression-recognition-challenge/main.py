@@ -2,6 +2,7 @@
 # https://pytorch.org/tutorials/beginner/blitz/cifar10_tutorial.html
 DATAPATH = "data/train.csv"
 DATA_CLASSES = ( 'angry', 'disgusted', 'afraid', 'happy', 'sad', 'surprised', 'neutral' )
+EPOCHS = 2
 
 # from matplotlib import pyplot as plt
 import torch
@@ -32,7 +33,7 @@ def load_data():
 
     print([(DATA_CLASSES[i], len(data_by_class[i])) for i in range(len(DATA_CLASSES))]) # TODO: dataset is extremely unbalanced
 
-    return data_by_class
+    return data
 
 class Net(nn.Module):
     def __init__(self):
@@ -64,14 +65,22 @@ if __name__ == '__main__':
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(net.parameters(), lr=0.001)
 
-    for epoch in range(2):
-        running_loss = 0.               # TODO: nanny
-        for i, samp in enumerate(data):
-            cls, img = samp
-            onehot = [int(i == cls) for i in range(7)]
-            print(onehot)
+    with tqdm(total=EPOCHS*len(data)) as pbar:
+        for epoch in range(EPOCHS):
+            running_loss = 0.               # TODO: nanny
+            for i, samp in enumerate(data):
+                cls, img = samp
+                onehot = [int(i == cls) for i in range(7)]
+                print(onehot)
 
-            optimizer.zero_grad()
+                optimizer.zero_grad()
 
-            got = net(img)
-            loss = criterion(got, onehot)
+                got = net(img)
+                loss = criterion(got, onehot)
+                loss.backward()
+                optimizer.step()
+
+                running_loss += loss.item()
+                pbar.update(1)
+                pbar.set_description(f'loss {loss.item():.3f}')
+
