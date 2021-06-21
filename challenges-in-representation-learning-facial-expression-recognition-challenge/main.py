@@ -2,14 +2,21 @@
 # https://pytorch.org/tutorials/beginner/blitz/cifar10_tutorial.html
 DATAPATH = "data/train.csv"
 DATA_CLASSES = ( 'angry', 'disgusted', 'afraid', 'happy', 'sad', 'surprised', 'neutral' )
-EPOCHS = 2
+LOGS_DIR = "logs"
+EPOCHS = 10
 BATCH_SIZE = 10
+LEARNING_RATE = 1e-6
+SHOULD_LOG = True
 
-# from matplotlib import pyplot as plt
+from matplotlib import pyplot as plt
+from matplotlib.lines import Line2D
+import numpy as np
 import torch
 from torch import nn, optim
 from torch.nn import functional as F
 from tqdm import tqdm
+
+from torch.utils.tensorboard import SummaryWriter
 
 import csv, pickle
 from pathlib import Path
@@ -22,6 +29,32 @@ def grouper(n, iterable):
             yield torch.stack(bad)
             bad = []
     yield torch.stack(bad)
+
+def plot_grad_flow_bars(named_parameters):
+    # from @jemoka inscriptio gc
+    ave_grads = []
+    max_grads= []
+    layers = []
+    for n, p in named_parameters:
+        if(p.requires_grad) and ("bias" not in n):
+            layers.append(n)
+            ave_grads.append(p.grad.abs().mean())
+            max_grads.append(p.grad.abs().max())
+
+    plt.bar(np.arange(len(max_grads)), max_grads, alpha=0.1, lw=1, color="c")
+    plt.bar(np.arange(len(max_grads)), ave_grads, alpha=0.1, lw=1, color="b")
+    plt.hlines(0, 0, len(ave_grads)+1, lw=2, color="k" )
+    plt.xticks(range(0,len(ave_grads), 1), layers, rotation="vertical")
+    plt.xlim(left=0, right=len(ave_grads))
+    plt.ylim(bottom = -0.001, top=0.02) # zoom in on the lower gradient regions
+    plt.xlabel("Layers")
+    plt.ylabel("average gradient")
+    plt.title("Gradient flow")
+    plt.grid(True)
+    plt.legend([Line2D([0], [0], color="c", lw=4),
+             Line2D([0], [0], color="b", lw=4),
+             Line2D([0], [0], color="k", lw=4)], ['max-gradient', 'mean-gradient', 'zero-gradient'])
+    plt.show()
 
 def load_data():
     if Path(DATAPATH+'.pkl').exists():
@@ -65,6 +98,7 @@ class Net(nn.Module):
         self.full1 = nn.Linear(16 * 9*9, 200)
         self.full2 = nn.Linear(200, 70)
         self.full3 = nn.Linear(70, 7)
+        self.final = nn.Softmax(dim=1)
 
     def forward(self, x):
         x = self.pool(F.relu(self.conv1(x)))
@@ -72,7 +106,8 @@ class Net(nn.Module):
         x = torch.flatten(x, start_dim=1)
         x = F.relu(self.full1(x))
         x = F.relu(self.full2(x))
-        return     self.full3(x)
+        x =        self.full3(x)
+        return self.final(x)
 
 if __name__ == '__main__':
     print(f'pytorch version is {torch.__version__}')
@@ -83,24 +118,34 @@ if __name__ == '__main__':
     print(net)
     print(f'parameter count: {len(list(net.parameters()))}')
 
-    criterion = nn.MSELoss()
-    optimizer = optim.Adam(net.parameters(), lr=0.001)
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.Adam(net.parameters(), lr=LEARNING_RATE)
+
+    if SHOULD_LOG:
+        writer = SummaryWriter(LOGS_DIR) # TODO: with statement
 
     with tqdm(total=EPOCHS*len(data)) as pbar:
         for epoch in range(EPOCHS):
             running_loss = 0.               # TODO: nanny
             for i, samp in enumerate(data):
                 img, cls = samp
-                onehot = F.one_hot(cls, len(DATA_CLASSES)).type(torch.float32)
+                # onehot = F.one_hot(cls, len(DATA_CLASSES)).type(torch.float32)
 
                 optimizer.zero_grad()
 
                 got = net(img)
-                loss = criterion(got, onehot)
+                loss = criterion(got, cls)
                 loss.backward()
+                # if i % 500 == 499:
+                #     plot_grad_flow_bars(net.named_parameters())
                 optimizer.step()
 
                 running_loss += loss.item()
                 pbar.update(1)
-                pbar.set_description(f'loss {loss.item():.3f}')
+                pbar.set_description(f'step {epoch*len(data)+i}; loss {loss.item():.3f}')
+                if SHOULD_LOG:
+                    writer.add_scalar('loss', loss.item(), epoch*len(data)+i)
+
+    if SHOULD_LOG:
+        writer.close()
 
