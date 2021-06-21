@@ -13,16 +13,15 @@ from tqdm import tqdm
 
 import csv, pickle
 from pathlib import Path
-from itertools import zip_longest
 
 def grouper(n, iterable):
     bad = []
     for i in iterable:
         bad.append(i)
         if len(bad) == n:
-            yield bad
+            yield torch.stack(bad)
             bad = []
-    yield bad
+    yield torch.stack(bad)
 
 def load_data():
     if Path(DATAPATH+'.pkl').exists():
@@ -47,7 +46,7 @@ def load_data():
                 # plt.show()
                 data_by_class[cls].append(img)
                 data[0].append(img)
-                data[1].append(cls)
+                data[1].append(torch.tensor(cls))
 
         print([(DATA_CLASSES[i], len(data_by_class[i])) for i in range(len(DATA_CLASSES))]) # TODO: dataset is extremely unbalanced
         with open(DATAPATH+'.pkl', 'wb+') as wf:
@@ -72,31 +71,27 @@ class Net(nn.Module):
         x = self.pool(F.relu(self.conv2(x)))
         x = torch.flatten(x, start_dim=1)
         x = F.relu(self.full1(x))
-        x = F.relu(self.full1(x))
-        return     self.full1(x)
+        x = F.relu(self.full2(x))
+        return     self.full3(x)
 
 if __name__ == '__main__':
     print(f'pytorch version is {torch.__version__}')
 
+    data = list(load_data())
 
     net = Net()
     print(net)
     print(f'parameter count: {len(list(net.parameters()))}')
 
-    data = list(load_data())
-    print(data)
-
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.MSELoss()
     optimizer = optim.Adam(net.parameters(), lr=0.001)
 
     with tqdm(total=EPOCHS*len(data)) as pbar:
         for epoch in range(EPOCHS):
             running_loss = 0.               # TODO: nanny
             for i, samp in enumerate(data):
-                print(samp)
                 img, cls = samp
-                onehot = [int(i == cls) for i in range(7)]
-                print(onehot)
+                onehot = F.one_hot(cls, len(DATA_CLASSES)).type(torch.float32)
 
                 optimizer.zero_grad()
 
