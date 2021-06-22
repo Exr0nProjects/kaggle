@@ -16,19 +16,12 @@ from torch import nn, optim
 from torch.nn import functional as F
 from tqdm import tqdm
 
+import wandb
+
 from torch.utils.tensorboard import SummaryWriter
 
 import csv, pickle
 from pathlib import Path
-
-def grouper(n, iterable):
-    bad = []
-    for i in iterable:
-        bad.append(i)
-        if len(bad) == n:
-            yield torch.stack(bad)
-            bad = []
-    yield torch.stack(bad)
 
 def plot_grad_flow_bars(named_parameters):
     # from @jemoka inscriptio gc
@@ -57,6 +50,15 @@ def plot_grad_flow_bars(named_parameters):
     plt.show()
 
 def load_data():
+    def grouper(n, iterable):
+        bad = []
+        for i in iterable:
+            bad.append(i)
+            if len(bad) == n:
+                yield torch.stack(bad)
+                bad = []
+        yield torch.stack(bad)
+
     if Path(DATAPATH+'.pkl').exists():
         print('found cached data; loading it...')
         with open(DATAPATH+'.pkl', 'rb') as rf:
@@ -91,11 +93,11 @@ def load_data():
 class Net(nn.Module):
     def __init__(self):
         super().__init__()
-        self.conv1 = nn.Conv2d(1, 6, 5)     # -> 6  x 44x44
-        self.pool = nn.MaxPool2d(2, 2)      # -> 6  x 22x22;    default stride = kernel_size
-        self.conv2 = nn.Conv2d(6, 16, 5)    # -> 16 x 18x18
-        # pool again                        # -> 16 x 9 x 9
-        self.full1 = nn.Linear(16 * 9*9, 200)
+        self.conv1 = nn.Conv2d(1, 10, 5)    # -> 10 x 44x44
+        self.pool = nn.MaxPool2d(2, 2)      # -> 10 x 22x22;    default stride = kernel_size
+        self.conv2 = nn.Conv2d(10, 20, 5)   # -> 20 x 18x18
+        # pool again                        # -> 20 x 9 x 9
+        self.full1 = nn.Linear(20 * 9*9, 200)
         self.full2 = nn.Linear(200, 70)
         self.full3 = nn.Linear(70, 7)
         self.final = nn.Softmax(dim=1)
@@ -110,25 +112,31 @@ class Net(nn.Module):
         return self.final(x)
 
 if __name__ == '__main__':
+    wandb.init(project='facial expression recognition')
     print(f'pytorch version is {torch.__version__}')
+
+    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    print(f'training on device {device}')
 
     data = list(load_data())
 
     net = Net()
     print(net)
     print(f'parameter count: {len(list(net.parameters()))}')
+    net.to(device)
 
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(net.parameters(), lr=LEARNING_RATE)
 
+
     if SHOULD_LOG:
-        writer = SummaryWriter(LOGS_DIR) # TODO: with statement
+        wandb.watch(net)
+        # writer = SummaryWriter(LOGS_DIR) # TODO: with statement
 
     with tqdm(total=EPOCHS*len(data)) as pbar:
         for epoch in range(EPOCHS):
-            running_loss = 0.               # TODO: nanny
             for i, samp in enumerate(data):
-                img, cls = samp
+                img, cls = samp[0].to(device), samp[1].to(device)
                 # onehot = F.one_hot(cls, len(DATA_CLASSES)).type(torch.float32)
 
                 optimizer.zero_grad()
@@ -140,12 +148,14 @@ if __name__ == '__main__':
                 #     plot_grad_flow_bars(net.named_parameters())
                 optimizer.step()
 
-                running_loss += loss.item()
                 pbar.update(1)
-                pbar.set_description(f'step {epoch*len(data)+i}; loss {loss.item():.3f}')
-                if SHOULD_LOG:
-                    writer.add_scalar('loss', loss.item(), epoch*len(data)+i)
+                if (epoch*len(data)+i) % int(1e2) == 0:
+                    pbar.set_description(f'step {epoch*len(data)+i}; loss {loss.item():.3f}')
+                    if SHOULD_LOG:
+                        wandb.log({'loss': loss})
+                        # writer.add_scalar('loss', loss.item(), epoch*len(data)+i)
 
     if SHOULD_LOG:
-        writer.close()
+        pass
+        # writer.close()
 
