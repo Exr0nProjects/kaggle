@@ -1,13 +1,5 @@
 # first time using pytorch from scratch, so be nice
 # https://pytorch.org/tutorials/beginner/blitz/cifar10_tutorial.html
-DATAPATH = "data/train.csv"
-DATA_CLASSES = ( 'angry', 'disgusted', 'afraid', 'happy', 'sad', 'surprised', 'neutral' )
-LOGS_DIR = "logs"
-EPOCHS = 10
-BATCH_SIZE = 10
-LEARNING_RATE = 1e-6
-SHOULD_LOG = True
-
 from matplotlib import pyplot as plt
 from matplotlib.lines import Line2D
 import numpy as np
@@ -15,41 +7,54 @@ import torch
 from torch import nn, optim
 from torch.nn import functional as F
 from tqdm import tqdm
+import random
 
 import wandb
 
 from torch.utils.tensorboard import SummaryWriter
 
-import csv, pickle
+import csv, pickle, subprocess
 from pathlib import Path
 
-def plot_grad_flow_bars(named_parameters):
-    # from @jemoka inscriptio gc
-    ave_grads = []
-    max_grads= []
-    layers = []
-    for n, p in named_parameters:
-        if(p.requires_grad) and ("bias" not in n):
-            layers.append(n)
-            ave_grads.append(p.grad.abs().mean())
-            max_grads.append(p.grad.abs().max())
+DATAPATH = "data/"
+DATA_CLASSES = ( 'angry', 'disgusted', 'afraid', 'happy', 'sad', 'surprised', 'neutral' )
+LOGS_DIR = "logs"
+SNAPSHOTS_DIR = "snapshots/"
+EPOCHS = 200
+BATCH_SIZE = 100
+LEARNING_RATE = 1e-8
+SHOULD_LOG = True
 
-    plt.bar(np.arange(len(max_grads)), max_grads, alpha=0.1, lw=1, color="c")
-    plt.bar(np.arange(len(max_grads)), ave_grads, alpha=0.1, lw=1, color="b")
-    plt.hlines(0, 0, len(ave_grads)+1, lw=2, color="k" )
-    plt.xticks(range(0,len(ave_grads), 1), layers, rotation="vertical")
-    plt.xlim(left=0, right=len(ave_grads))
-    plt.ylim(bottom = -0.001, top=0.02) # zoom in on the lower gradient regions
-    plt.xlabel("Layers")
-    plt.ylabel("average gradient")
-    plt.title("Gradient flow")
-    plt.grid(True)
-    plt.legend([Line2D([0], [0], color="c", lw=4),
-             Line2D([0], [0], color="b", lw=4),
-             Line2D([0], [0], color="k", lw=4)], ['max-gradient', 'mean-gradient', 'zero-gradient'])
-    plt.show()
+CACHED_FILES = {  }
 
-def load_data():
+# def plot_grad_flow_bars(named_parameters):
+#     # from @jemoka inscriptio gc
+#     # looks like original source was https://discuss.pytorch.org/t/check-gradient-flow-in-network/15063/22
+#     ave_grads = []
+#     max_grads= []
+#     layers = []
+#     for n, p in named_parameters:
+#         if(p.requires_grad) and ("bias" not in n):
+#             layers.append(n)
+#             ave_grads.append(p.grad.abs().mean())
+#             max_grads.append(p.grad.abs().max())
+#
+#     plt.bar(np.arange(len(max_grads)), max_grads, alpha=0.1, lw=1, color="c")
+#     plt.bar(np.arange(len(max_grads)), ave_grads, alpha=0.1, lw=1, color="b")
+#     plt.hlines(0, 0, len(ave_grads)+1, lw=2, color="k" )
+#     plt.xticks(range(0,len(ave_grads), 1), layers, rotation="vertical")
+#     plt.xlim(left=0, right=len(ave_grads))
+#     plt.ylim(bottom = -0.001, top=0.02) # zoom in on the lower gradient regions
+#     plt.xlabel("Layers")
+#     plt.ylabel("average gradient")
+#     plt.title("Gradient flow")
+#     plt.grid(True)
+#     plt.legend([Line2D([0], [0], color="c", lw=4),
+#              Line2D([0], [0], color="b", lw=4),
+#              Line2D([0], [0], color="k", lw=4)], ['max-gradient', 'mean-gradient', 'zero-gradient'])
+#     plt.show()
+
+def load_data(path):
     def grouper(n, iterable):
         bad = []
         for i in iterable:
@@ -59,18 +64,20 @@ def load_data():
                 bad = []
         yield torch.stack(bad)
 
-    if Path(DATAPATH+'.pkl').exists():
+    if path in CACHED_FILES:
+        data = CACHED_FILES[path]
+    elif Path(DATAPATH + path+'.pkl').exists():
         print('found cached data; loading it...')
-        with open(DATAPATH+'.pkl', 'rb') as rf:
+        with open(DATAPATH + path+'.pkl', 'rb') as rf:
             data = pickle.load(rf)
     else:
         # NTFS: could probably use torchvision.dataloader but meh
         data_by_class = [[]] * len(DATA_CLASSES)
         data = [[], []]
         print('loading data...')
-        with open(DATAPATH, 'r') as rf:
+        with open(DATAPATH + path, 'r') as rf:
             lines = sum(1 for _ in rf)
-        with open(DATAPATH, 'r') as rf:
+        with open(DATAPATH + path, 'r') as rf:
             for line in tqdm(csv.DictReader(rf), total=lines):
                 cls = int(line['emotion']) # unsafe
                 img = torch.tensor([int(p) for p in line['pixels'].split()],
@@ -84,8 +91,9 @@ def load_data():
                 data[1].append(torch.tensor(cls))
 
         print([(DATA_CLASSES[i], len(data_by_class[i])) for i in range(len(DATA_CLASSES))]) # TODO: dataset is extremely unbalanced
-        with open(DATAPATH+'.pkl', 'wb+') as wf:
+        with open(DATAPATH + path+'.pkl', 'wb+') as wf:
             pickle.dump(data, wf)
+    CACHED_FILES[path] = data
 
     for batch in zip(grouper(BATCH_SIZE, data[0]), grouper(BATCH_SIZE, data[1])):
         yield batch
@@ -111,14 +119,34 @@ class Net(nn.Module):
         x =        self.full3(x)
         return self.final(x)
 
+
+def evaluate(model):
+
+    correct = 0
+    total = 0
+
+    with torch.no_grad():
+        for data in load_data('dev.csv'):
+            img, cls = data[0].to(next(model.parameters()).device), data[1].to(next(model.parameters()).device)
+
+            got = net(img)
+
+            _, predicted = torch.max(got.data, 1)
+            total += cls.size(0)
+            correct += (predicted == cls).sum().item()
+
+    return correct / total
+
 if __name__ == '__main__':
-    wandb.init(project='facial expression recognition')
-    print(f'pytorch version is {torch.__version__}')
+    model_id = subprocess.run(["witty-phrase-generator"], capture_output=True).stdout.decode('utf-8').strip()
+    wandb.init(project=f'facial expression recognition')
+    print(f'STARTING RUN {model_id}: pytorch version is {torch.__version__}')
 
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-    print(f'training on device {device}')
+    # device = 'cpu'
+    print(f'training on device {device} {torch.cuda.get_device_name(torch.cuda.current_device())}')
 
-    data = list(load_data())
+    data = list(load_data('train.csv'))
 
     net = Net()
     print(net)
@@ -132,6 +160,7 @@ if __name__ == '__main__':
     if SHOULD_LOG:
         wandb.watch(net)
         # writer = SummaryWriter(LOGS_DIR) # TODO: with statement
+        pass
 
     with tqdm(total=EPOCHS*len(data)) as pbar:
         for epoch in range(EPOCHS):
@@ -144,18 +173,23 @@ if __name__ == '__main__':
                 got = net(img)
                 loss = criterion(got, cls)
                 loss.backward()
-                # if i % 500 == 499:
+                # if i % 500 == 0:
                 #     plot_grad_flow_bars(net.named_parameters())
                 optimizer.step()
 
                 pbar.update(1)
                 if (epoch*len(data)+i) % int(1e2) == 0:
-                    pbar.set_description(f'step {epoch*len(data)+i}; loss {loss.item():.3f}')
+                    acc = evaluate(net)
+                    pbar.set_description(f'{model_id} | step {epoch*len(data)+i} | loss {loss.item():.3f} | acc {acc*100:.3f}')
                     if SHOULD_LOG:
-                        wandb.log({'loss': loss})
+                        wandb.log({'loss': loss, 'acc': acc})
                         # writer.add_scalar('loss', loss.item(), epoch*len(data)+i)
+                        pass
 
     if SHOULD_LOG:
         pass
         # writer.close()
 
+    torch.save(net.state_dict(), SNAPSHOTS_DIR + f'{model_id}_final.model')
+
+    print(f'final accuarcy was {evaluate(net)*100:.4f}%')
