@@ -20,7 +20,7 @@ DATAPATH = "data/"
 DATA_CLASSES = ( 'angry', 'disgusted', 'afraid', 'happy', 'sad', 'surprised', 'neutral' )
 LOGS_DIR = "logs"
 SNAPSHOTS_DIR = "snapshots/"
-EPOCHS = 200
+EPOCHS = 20000
 BATCH_SIZE = 100
 LEARNING_RATE = 1e-8
 SHOULD_LOG = True
@@ -103,16 +103,18 @@ class Net(nn.Module):
         super().__init__()
         self.conv1 = nn.Conv2d(1, 10, 5)    # -> 10 x 44x44
         self.pool = nn.MaxPool2d(2, 2)      # -> 10 x 22x22;    default stride = kernel_size
+        self.norm1 = torch.nn.BatchNorm2d(10)
         self.conv2 = nn.Conv2d(10, 20, 5)   # -> 20 x 18x18
         # pool again                        # -> 20 x 9 x 9
-        self.full1 = nn.Linear(20 * 9*9, 200)
-        self.full2 = nn.Linear(200, 70)
-        self.full3 = nn.Linear(70, 7)
+        self.norm2 = torch.nn.BatchNorm2d(20)
+        self.full1 = nn.Linear(20 * 9*9, 120)
+        self.full2 = nn.Linear(120, 30)
+        self.full3 = nn.Linear(30, 7)
         self.final = nn.Softmax(dim=1)
 
     def forward(self, x):
-        x = self.pool(F.relu(self.conv1(x)))
-        x = self.pool(F.relu(self.conv2(x)))
+        x = self.norm1(self.pool(F.relu(self.conv1(x))))
+        x = self.norm2(self.pool(F.relu(self.conv2(x))))
         x = torch.flatten(x, start_dim=1)
         x = F.relu(self.full1(x))
         x = F.relu(self.full2(x))
