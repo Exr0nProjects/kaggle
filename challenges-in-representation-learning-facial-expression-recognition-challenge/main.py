@@ -7,13 +7,12 @@ import torch
 from torch import nn, optim
 from torch.nn import functional as F
 from tqdm import tqdm
-import random
 
 import wandb
 
-from torch.utils.tensorboard import SummaryWriter
-
+import random
 import csv, pickle, subprocess
+from datetime import datetime
 from pathlib import Path
 
 DATAPATH = "data/"
@@ -298,14 +297,16 @@ class Net(nn.Module):
         self.conv1 = nn.Conv2d(1, 20, 5)    # -> 20 x 44x44
         self.pool = nn.MaxPool2d(2, 2)      # -> 20 x 22x22;    default stride = kernel_size
         self.norm1 = torch.nn.BatchNorm2d(20)
-        self.conv2 = nn.Conv2d(20, 40, 5)   # -> 40 x 18x18
+        self.conv2 = nn.Conv2d(20, 48, 5)   # -> 40 x 18x18
         # pool again                        # -> 40 x 9 x 9
-        self.norm2 = torch.nn.BatchNorm2d(40)
-        self.full1 = nn.Linear(40 * 9*9, 300)
-        self.ln1   = nn.LayerNorm(300)
-        self.full2 = nn.Linear(300, 70)
-        self.ln2   = nn.LayerNorm(70)
-        self.full3 = nn.Linear(70, 7)
+        self.norm2 = torch.nn.BatchNorm2d(48)
+        self.full1 = nn.Linear(48 * 9*9, 600)
+        self.ln1   = nn.LayerNorm(600)
+        self.full2 = nn.Linear(600, 200)
+        self.ln2   = nn.LayerNorm(200)
+        self.full3 = nn.Linear(200, 70)
+        self.ln3   = nn.LayerNorm(70)
+        self.full4 = nn.Linear(70, 7)
         self.final = nn.Softmax(dim=1)
 
     def forward(self, x):
@@ -314,7 +315,8 @@ class Net(nn.Module):
         x = torch.flatten(x, start_dim=1)
         x = self.ln1(F.relu(self.full1(x)))
         x = self.ln2(F.relu(self.full2(x)))
-        x =      self.final(self.full3(x))
+        x = self.ln3(F.relu(self.full3(x)))
+        x =      self.final(self.full4(x))
         return x
 
 
@@ -390,6 +392,7 @@ def train():
                         # writer.add_scalar('loss', loss.item(), epoch*len(data)+i)
                         pass
                     if (epoch*len(data)+i) % int(1e5) == 0:
+                        print(f'saved {model_id} after {(epoch*len(data)+i)/1000}k steps at {str(datetime.now())}')
                         torch.save(net.state_dict(), SNAPSHOTS_DIR + f'{model_id}_{(epoch*len(data)+i)/1000}k.model')
 
     if SHOULD_LOG:
