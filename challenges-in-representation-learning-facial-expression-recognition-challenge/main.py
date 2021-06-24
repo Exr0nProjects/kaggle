@@ -22,10 +22,10 @@ LOGS_DIR = "logs"
 SNAPSHOTS_DIR = "snapshots/"
 EPOCHS = 20000
 BATCH_SIZE = 100
-LEARNING_RATE = 1e-8
+LEARNING_RATE = 1e-7
 SHOULD_LOG = True
 
-CACHED_FILES = {  }
+CACHED_FILES = {}
 
 # def plot_grad_flow_bars(named_parameters):
 #     # from @jemoka inscriptio gc
@@ -53,6 +53,189 @@ CACHED_FILES = {  }
 #              Line2D([0], [0], color="b", lw=4),
 #              Line2D([0], [0], color="k", lw=4)], ['max-gradient', 'mean-gradient', 'zero-gradient'])
 #     plt.show()
+
+# # BEGIN YOINK
+# # from https://github.com/ayulockin/debugNNwithWandB/blob/master/MNIST_pytorch_wandb_LRFinder.ipynb
+# # linked by: https://wandb.ai/site/articles/debugging-neural-networks-with-pytorch-and-w-b-using-gradients-and-visualizations
+# ## Reference: https://github.com/davidtvs/pytorch-lr-finder/blob/14abc0b8c3edd95eefa385c2619028e73831622a/torch_lr_finder/lr_finder.py
+# from torch.optim.lr_scheduler import _LRScheduler
+#
+# class ExponentialLR(_LRScheduler):
+#     def __init__(self, optimizer, end_lr, num_iter, last_epoch=-1):
+#         self.end_lr = end_lr
+#         self.num_iter = num_iter
+#         super(ExponentialLR, self).__init__(optimizer, last_epoch)
+#
+#     def get_lr(self):
+#         curr_iter = self.last_epoch + 1
+#         r = curr_iter / self.num_iter
+#         return [base_lr * (self.end_lr / base_lr) ** r for base_lr in self.base_lrs]
+#
+# class DataLoaderIterWrapper(object):
+#     def __init__(self, data_loader, auto_reset=True):
+#         self.data_loader = data_loader
+#         self.auto_reset = auto_reset
+#         self._iterator = iter(data_loader)
+#
+#     def __next__(self):
+#         # Get a new set of inputs and labels
+#         try:
+#             inputs, labels = next(self._iterator)
+#         except StopIteration:
+#             if not self.auto_reset:
+#                 raise
+#             self._iterator = iter(self.data_loader)
+#             inputs, labels = next(self._iterator)
+#
+#         return inputs, labels
+#
+#     def get_batch(self):
+#         return next(self)
+#
+# class LRFinder(object):
+#     def __init__(self,model,optimizer,device=None,memory_cache=True,cache_dir=None):
+#         # Check if the optimizer is already attached to a scheduler
+#         self.optimizer = optimizer
+#         self.model = model
+#         self.history = {"lr": [], "loss": []}
+#         self.best_loss = None
+#         self.device = device
+#
+#     def range_test(self,
+#         train_loader,
+#         val_loader=None,
+#         start_lr=None,
+#         end_lr=10,
+#         num_iter=100,
+#         smooth_f=0.05,
+#         diverge_th=8,
+#         accumulation_steps=1,
+#         logwandb=False
+#     ):
+#         # Reset test results
+#         self.history = {"lr": [], "loss": []}
+#         self.best_loss = None
+#
+#         # Move the model to the proper device
+#         self.model.to(self.device)
+#
+#         # Set the starting learning rate
+#         if start_lr:
+#             self._set_learning_rate(start_lr)
+#
+#         # Initialize the proper learning rate policy
+#         lr_schedule = ExponentialLR(self.optimizer, end_lr, num_iter)
+#
+#         if smooth_f < 0 or smooth_f >= 1:
+#             raise ValueError("smooth_f is outside the range [0, 1]")
+#
+#         # Create an iterator to get data batch by batch
+#         iter_wrapper = DataLoaderIterWrapper(train_loader)
+#
+#         for iteration in range(num_iter):
+#             # Train on batch and retrieve loss
+#             loss = self._train_on_batch(iter_wrapper, accumulation_steps)
+#
+#             # Update the learning rate
+#             lr_schedule.step()
+#             self.history["lr"].append(lr_schedule.get_lr()[0])
+#
+#             # Track the best loss and smooth it if smooth_f is specified
+#             if iteration == 0:
+#                 self.best_loss = loss
+#             else:
+#                 if smooth_f > 0:
+#                     loss = smooth_f * loss + (1 - smooth_f) * self.history["loss"][-1]
+#                 if loss < self.best_loss:
+#                     self.best_loss = loss
+#
+#             # Check if the loss has diverged; if it has, stop the test
+#             self.history["loss"].append(loss)
+#
+#             if logwandb:
+#               wandb.log({'lr': lr_schedule.get_lr()[0], 'loss': loss})
+#
+#             if loss > diverge_th * self.best_loss:
+#                 print("Stopping early, the loss has diverged")
+#                 break
+#
+#         print("Learning rate search finished")
+#
+#     def _set_learning_rate(self, new_lrs):
+#         if not isinstance(new_lrs, list):
+#             new_lrs = [new_lrs] * len(self.optimizer.param_groups)
+#         if len(new_lrs) != len(self.optimizer.param_groups):
+#             raise ValueError(
+#                 "Length of `new_lrs` is not equal to the number of parameter groups "
+#                 + "in the given optimizer"
+#             )
+#
+#         for param_group, new_lr in zip(self.optimizer.param_groups, new_lrs):
+#             param_group["lr"] = new_lr
+#
+#     def _train_on_batch(self, iter_wrapper, accumulation_steps):
+#         self.model.train()
+#         total_loss = None  # for late initialization
+#
+#         self.optimizer.zero_grad()
+#         for i in range(accumulation_steps):
+#             inputs, labels = iter_wrapper.get_batch()
+#             inputs, labels = inputs.to(device), labels.to(device)
+#
+#             # Forward pass
+#             outputs = self.model(inputs)
+#             loss = F.nll_loss(outputs, labels)
+#
+#             # Loss should be averaged in each step
+#             loss /= accumulation_steps
+#
+#             loss.backward()
+#
+#             if total_loss is None:
+#                 total_loss = loss.item()
+#             else:
+#                 total_loss += loss.item()
+#
+#         self.optimizer.step()
+#
+#         return total_loss
+#
+#     def plot(self, skip_start=10, skip_end=5, log_lr=True, show_lr=None):
+#         if skip_start < 0:
+#             raise ValueError("skip_start cannot be negative")
+#         if skip_end < 0:
+#             raise ValueError("skip_end cannot be negative")
+#         if show_lr is not None and not isinstance(show_lr, float):
+#             raise ValueError("show_lr must be float")
+#
+#         # Get the data to plot from the history dictionary. Also, handle skip_end=0
+#         # properly so the behaviour is the expected
+#         lrs = self.history["lr"]
+#         losses = self.history["loss"]
+#         if skip_end == 0:
+#             lrs = lrs[skip_start:]
+#             losses = losses[skip_start:]
+#         else:
+#             lrs = lrs[skip_start:-skip_end]
+#             losses = losses[skip_start:-skip_end]
+#
+#         # Plot loss as a function of the learning rate
+#         plt.plot(lrs, losses)
+#         if log_lr:
+#             plt.xscale("log")
+#         plt.xlabel("Learning rate")
+#         plt.ylabel("Loss")
+#
+#         if show_lr is not None:
+#             plt.axvline(x=show_lr, color="red")
+#         plt.show()
+#
+#     def get_best_lr(self):
+#       lrs = self.history['lr']
+#       losses = self.history['loss']
+#       return lrs[losses.index(min(losses))]
+#
+# # END YOINK
 
 def load_data(path):
     def grouper(n, iterable):
@@ -112,6 +295,17 @@ class Net(nn.Module):
         self.full3 = nn.Linear(30, 7)
         self.final = nn.Softmax(dim=1)
 
+        # self.conv1 = nn.Conv2d(1, 16, 5)    # -> 16 x 44x44
+        # self.pool = nn.MaxPool2d(2, 2)      # -> 16 x 22x22;    default stride = kernel_size
+        # self.norm1 = torch.nn.BatchNorm2d(16)
+        # self.conv2 = nn.Conv2d(16, 32, 5)   # -> 32 x 18x18
+        # # pool again                        # -> 32 x 9 x 9
+        # self.norm2 = torch.nn.BatchNorm2d(32)
+        # self.full1 = nn.Linear(32 * 9*9, 200)
+        # self.full2 = nn.Linear(200, 70)
+        # self.full3 = nn.Linear(70, 7)
+        # self.final = nn.Softmax(dim=1)
+
     def forward(self, x):
         x = self.norm1(self.pool(F.relu(self.conv1(x))))
         x = self.norm2(self.pool(F.relu(self.conv2(x))))
@@ -131,7 +325,7 @@ def evaluate(model):
         for data in load_data('dev.csv'):
             img, cls = data[0].to(next(model.parameters()).device), data[1].to(next(model.parameters()).device)
 
-            got = net(img)
+            got = model(img)
 
             _, predicted = torch.max(got.data, 1)
             total += cls.size(0)
@@ -139,9 +333,11 @@ def evaluate(model):
 
     return correct / total
 
-if __name__ == '__main__':
+def train():
     model_id = subprocess.run(["witty-phrase-generator"], capture_output=True).stdout.decode('utf-8').strip()
     wandb.init(project=f'facial expression recognition')
+
+
     print(f'STARTING RUN {model_id}: pytorch version is {torch.__version__}')
 
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -151,6 +347,7 @@ if __name__ == '__main__':
     data = list(load_data('train.csv'))
 
     net = Net()
+    net.load_state_dict(torch.load(SNAPSHOTS_DIR + 'maximally-individual-girlfriend_final.model'))
     print(net)
     print(f'parameter count: {len(list(net.parameters()))}')
     net.to(device)
@@ -158,6 +355,9 @@ if __name__ == '__main__':
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(net.parameters(), lr=LEARNING_RATE)
 
+    # see class LRFinder for yoink source
+    # lr_finder = LRFinder(net, optimizer, device)
+    # lr_finder.range_test(data, end_lr=10, num_iter=100, logwandb=True)
 
     if SHOULD_LOG:
         wandb.watch(net)
@@ -195,3 +395,8 @@ if __name__ == '__main__':
     torch.save(net.state_dict(), SNAPSHOTS_DIR + f'{model_id}_final.model')
 
     print(f'final accuarcy was {evaluate(net)*100:.4f}%')
+
+
+if __name__ == '__main__':
+    train()
+
