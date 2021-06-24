@@ -20,7 +20,7 @@ DATAPATH = "data/"
 DATA_CLASSES = ( 'angry', 'disgusted', 'afraid', 'happy', 'sad', 'surprised', 'neutral' )
 LOGS_DIR = "logs"
 SNAPSHOTS_DIR = "snapshots/"
-EPOCHS = 20000
+EPOCHS = 200000
 BATCH_SIZE = 100
 LEARNING_RATE = 1e-7
 SHOULD_LOG = True
@@ -284,36 +284,38 @@ def load_data(path):
 class Net(nn.Module):
     def __init__(self):
         super().__init__()
-        self.conv1 = nn.Conv2d(1, 10, 5)    # -> 10 x 44x44
-        self.pool = nn.MaxPool2d(2, 2)      # -> 10 x 22x22;    default stride = kernel_size
-        self.norm1 = torch.nn.BatchNorm2d(10)
-        self.conv2 = nn.Conv2d(10, 20, 5)   # -> 20 x 18x18
-        # pool again                        # -> 20 x 9 x 9
-        self.norm2 = torch.nn.BatchNorm2d(20)
-        self.full1 = nn.Linear(20 * 9*9, 120)
-        self.full2 = nn.Linear(120, 30)
-        self.full3 = nn.Linear(30, 7)
-        self.final = nn.Softmax(dim=1)
-
-        # self.conv1 = nn.Conv2d(1, 16, 5)    # -> 16 x 44x44
-        # self.pool = nn.MaxPool2d(2, 2)      # -> 16 x 22x22;    default stride = kernel_size
-        # self.norm1 = torch.nn.BatchNorm2d(16)
-        # self.conv2 = nn.Conv2d(16, 32, 5)   # -> 32 x 18x18
-        # # pool again                        # -> 32 x 9 x 9
-        # self.norm2 = torch.nn.BatchNorm2d(32)
-        # self.full1 = nn.Linear(32 * 9*9, 200)
-        # self.full2 = nn.Linear(200, 70)
-        # self.full3 = nn.Linear(70, 7)
+        # self.conv1 = nn.Conv2d(1, 10, 5)    # -> 10 x 44x44
+        # self.pool = nn.MaxPool2d(2, 2)      # -> 10 x 22x22;    default stride = kernel_size
+        # self.norm1 = torch.nn.BatchNorm2d(10)
+        # self.conv2 = nn.Conv2d(10, 20, 5)   # -> 20 x 18x18
+        # # pool again                        # -> 20 x 9 x 9
+        # self.norm2 = torch.nn.BatchNorm2d(20)
+        # self.full1 = nn.Linear(20 * 9*9, 120)
+        # self.full2 = nn.Linear(120, 30)
+        # self.full3 = nn.Linear(30, 7)
         # self.final = nn.Softmax(dim=1)
+
+        self.conv1 = nn.Conv2d(1, 20, 5)    # -> 20 x 44x44
+        self.pool = nn.MaxPool2d(2, 2)      # -> 20 x 22x22;    default stride = kernel_size
+        self.norm1 = torch.nn.BatchNorm2d(20)
+        self.conv2 = nn.Conv2d(20, 40, 5)   # -> 40 x 18x18
+        # pool again                        # -> 40 x 9 x 9
+        self.norm2 = torch.nn.BatchNorm2d(40)
+        self.full1 = nn.Linear(40 * 9*9, 300)
+        self.ln1   = nn.LayerNorm(300)
+        self.full2 = nn.Linear(300, 70)
+        self.ln2   = nn.LayerNorm(70)
+        self.full3 = nn.Linear(70, 7)
+        self.final = nn.Softmax(dim=1)
 
     def forward(self, x):
         x = self.norm1(self.pool(F.relu(self.conv1(x))))
         x = self.norm2(self.pool(F.relu(self.conv2(x))))
         x = torch.flatten(x, start_dim=1)
-        x = F.relu(self.full1(x))
-        x = F.relu(self.full2(x))
-        x =        self.full3(x)
-        return self.final(x)
+        x = self.ln1(F.relu(self.full1(x)))
+        x = self.ln2(F.relu(self.full2(x)))
+        x =      self.final(self.full3(x))
+        return x
 
 
 def evaluate(model):
@@ -347,7 +349,7 @@ def train():
     data = list(load_data('train.csv'))
 
     net = Net()
-    net.load_state_dict(torch.load(SNAPSHOTS_DIR + 'maximally-individual-girlfriend_final.model'))
+    # net.load_state_dict(torch.load(SNAPSHOTS_DIR + 'maximally-individual-girlfriend_final.model'))
     print(net)
     print(f'parameter count: {len(list(net.parameters()))}')
     net.to(device)
@@ -387,6 +389,8 @@ def train():
                         wandb.log({'loss': loss, 'acc': acc})
                         # writer.add_scalar('loss', loss.item(), epoch*len(data)+i)
                         pass
+                    if (epoch*len(data)+i) % int(1e5) == 0:
+                        torch.save(net.state_dict(), SNAPSHOTS_DIR + f'{model_id}_{(epoch*len(data)+i)/1000}k.model')
 
     if SHOULD_LOG:
         pass
