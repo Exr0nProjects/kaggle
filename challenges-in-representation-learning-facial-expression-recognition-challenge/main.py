@@ -409,10 +409,12 @@ def train():
     print(f'final accuarcy was {evaluate(net)*100:.4f}%')
 
 def manual_eval():
-    data = list(load_data('dev.csv', batch_size=4))
+    data = list(load_data('train.csv', batch_size=4))
+    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
     net = Net()
     net.load_state_dict(torch.load(SNAPSHOTS_DIR + 'motherly-loyal-construction_2800.0k.model'))
+    # net.to(device)
 
     print(f'network total number of parameters: {sum([math.prod(t.shape) for t in net.parameters()]) / 1e6:.2f}M')
 
@@ -428,8 +430,9 @@ def manual_eval():
 
     # plt.figure()
     with torch.no_grad():
-        for b_img, b_cls in data:
+        for b_img, b_cls in tqdm(data):
             f, axs = plt.subplots(1, 4)
+            # b_img = b_img.to(device)
             for ax, img, cls, got in zip(axs, b_img, b_cls, net(b_img)):
                 got = sorted(zip(got, DATA_CLASSES), reverse=True)
                 correct = (got[0][1] == DATA_CLASSES[cls.item()])
