@@ -11,7 +11,10 @@ from tqdm import tqdm
 import wandb
 
 import random
-import csv, pickle, subprocess
+import math
+import csv
+import pickle
+import subprocess
 from datetime import datetime
 from pathlib import Path
 
@@ -23,6 +26,7 @@ EPOCHS = 200000
 BATCH_SIZE = 100
 LEARNING_RATE = 1e-7
 SHOULD_LOG = True
+SHOULD_SHOW_FIGURES = False
 
 CACHED_FILES = {}
 
@@ -236,7 +240,8 @@ CACHED_FILES = {}
 #
 # # END YOINK
 
-def load_data(path):
+
+def load_data(path, batch_size=BATCH_SIZE):
     def grouper(n, iterable):
         bad = []
         for i in iterable:
@@ -277,7 +282,7 @@ def load_data(path):
             pickle.dump(data, wf)
     CACHED_FILES[path] = data
 
-    for batch in zip(grouper(BATCH_SIZE, data[0]), grouper(BATCH_SIZE, data[1])):
+    for batch in zip(grouper(batch_size, data[0]), grouper(batch_size, data[1])):
         yield batch
 
 class Net(nn.Module):
@@ -353,7 +358,7 @@ def train():
     net = Net()
     # net.load_state_dict(torch.load(SNAPSHOTS_DIR + 'maximally-individual-girlfriend_final.model'))
     print(net)
-    print(f'parameter count: {len(list(net.parameters()))}')
+    print(f'parameter count: {sum([math.prod(t.shape) for t in net.parameters()])}')
     net.to(device)
 
     criterion = nn.CrossEntropyLoss()
@@ -392,8 +397,8 @@ def train():
                         # writer.add_scalar('loss', loss.item(), epoch*len(data)+i)
                         pass
                     if (epoch*len(data)+i) % int(1e5) == 0:
-                        print(f'saved {model_id} after {(epoch*len(data)+i)/1000}k steps at {str(datetime.now())}')
-                        torch.save(net.state_dict(), SNAPSHOTS_DIR + f'{model_id}_{(epoch*len(data)+i)/1000}k.model')
+                        print(f'saved {model_id} after {(epoch*len(data)+i)//1000}k steps at {str(datetime.now())}')
+                        torch.save(net.state_dict(), SNAPSHOTS_DIR + f'{model_id}_{(epoch*len(data)+i)//1000}k.model')
 
     if SHOULD_LOG:
         pass
@@ -403,7 +408,49 @@ def train():
 
     print(f'final accuarcy was {evaluate(net)*100:.4f}%')
 
+def manual_eval():
+    data = list(load_data('dev.csv', batch_size=4))
+
+    net = Net()
+    net.load_state_dict(torch.load(SNAPSHOTS_DIR + 'motherly-loyal-construction_2800.0k.model'))
+
+    print(f'network total number of parameters: {sum([math.prod(t.shape) for t in net.parameters()]) / 1e6:.2f}M')
+
+    # print(data[:10])
+
+    cls_cnt = torch.zeros((7,))
+    cls_correct_cnt = torch.zeros((7,))
+    for b_img, b_cls in data:
+        for cls in b_cls:
+            cls_cnt[cls] += 1
+
+    print('dev set ratios:', sorted(list(zip(cls_cnt, DATA_CLASSES))))
+
+    # plt.figure()
+    with torch.no_grad():
+        for b_img, b_cls in data:
+            f, axs = plt.subplots(1, 4)
+            for ax, img, cls, got in zip(axs, b_img, b_cls, net(b_img)):
+                got = sorted(zip(got, DATA_CLASSES), reverse=True)
+                correct = (got[0][1] == DATA_CLASSES[cls.item()])
+                if correct:
+                    cls_correct_cnt[cls.item()] += 1
+
+                if SHOULD_SHOW_FIGURES:
+                    ax.imshow(img.squeeze(dim=0))
+                    ax.text(0, -10, 'correct' if correct else 'incorrect', color='green' if correct else 'red')
+                    ax.text(0, -5, f"ground truth: {DATA_CLASSES[cls]}")
+
+                    for i, (prob, cls) in enumerate(got):
+                        ax.text(0, 60+5*i, f"{cls}: {prob:.4f}")
+            if SHOULD_SHOW_FIGURES:
+                plt.show()
+
+    print('dev accuracies by category:', sorted(list(zip(cls_correct_cnt/cls_cnt, DATA_CLASSES))))
+
 
 if __name__ == '__main__':
-    train()
+    # train()
+
+    manual_eval()
 
