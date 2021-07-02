@@ -266,6 +266,7 @@ def load_data(path, batch_size=BATCH_SIZE):
             lines = sum(1 for _ in rf)
         with open(DATAPATH + path, 'r') as rf:
             for line in tqdm(csv.DictReader(rf), total=lines):
+                # line = { 'emotion': '0', 'pixels': '10 2 5 9 ...' }
                 cls = int(line['emotion']) # unsafe
                 img = torch.tensor([int(p) for p in line['pixels'].split()],
                         dtype=torch.float32).reshape((48, 48))
@@ -409,7 +410,7 @@ def train():
     print(f'final accuarcy was {evaluate(net)*100:.4f}%')
 
 def manual_eval():
-    data = list(load_data('train.csv', batch_size=4))
+    data = list(load_data('test2.csv', batch_size=4))
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
     net = Net()
@@ -428,16 +429,22 @@ def manual_eval():
 
     print('dev set ratios:', sorted(list(zip(cls_cnt, DATA_CLASSES))))
 
+    tot_correct = 0
+    total = 0
+
     # plt.figure()
     with torch.no_grad():
         for b_img, b_cls in tqdm(data):
             f, axs = plt.subplots(1, 4)
             # b_img = b_img.to(device)
             for ax, img, cls, got in zip(axs, b_img, b_cls, net(b_img)):
+                total += 1
+
                 got = sorted(zip(got, DATA_CLASSES), reverse=True)
                 correct = (got[0][1] == DATA_CLASSES[cls.item()])
                 if correct:
                     cls_correct_cnt[cls.item()] += 1
+                    tot_correct += 1
 
                 if SHOULD_SHOW_FIGURES:
                     ax.imshow(img.squeeze(dim=0))
@@ -450,6 +457,7 @@ def manual_eval():
                 plt.show()
 
     print('dev accuracies by category:', sorted(list(zip(cls_correct_cnt/cls_cnt, DATA_CLASSES))))
+    print(f'total accuracy: {tot_correct / total:.3f}')
 
 
 if __name__ == '__main__':
