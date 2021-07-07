@@ -22,7 +22,7 @@ DATAPATH = "data/"
 DATA_CLASSES = ( 'angry', 'disgusted', 'afraid', 'happy', 'sad', 'surprised', 'neutral' )
 LOGS_DIR = "logs"
 SNAPSHOTS_DIR = "snapshots/"
-EPOCHS = 200000
+EPOCHS = 40000
 BATCH_SIZE = 100
 LEARNING_RATE = 1e-7
 SHOULD_LOG = True
@@ -300,13 +300,13 @@ class Net(nn.Module):
         # self.full3 = nn.Linear(30, 7)
         # self.final = nn.Softmax(dim=1)
 
-        self.conv1 = nn.Conv2d(1, 20, 5)    # -> 20 x 44x44
+        self.conv1 = nn.Conv2d(1, 10, 5)    # -> 20 x 44x44
         self.pool = nn.MaxPool2d(2, 2)      # -> 20 x 22x22;    default stride = kernel_size
-        self.norm1 = torch.nn.BatchNorm2d(20)
-        self.conv2 = nn.Conv2d(20, 48, 5)   # -> 40 x 18x18
+        self.norm1 = torch.nn.BatchNorm2d(10)
+        self.conv2 = nn.Conv2d(10, 24, 5)   # -> 40 x 18x18
         # pool again                        # -> 40 x 9 x 9
-        self.norm2 = torch.nn.BatchNorm2d(48)
-        self.full1 = nn.Linear(48 * 9*9, 600)
+        self.norm2 = torch.nn.BatchNorm2d(24)
+        self.full1 = nn.Linear(24 * 9*9, 600)
         self.ln1   = nn.LayerNorm(600)
         self.full2 = nn.Linear(600, 200)
         self.ln2   = nn.LayerNorm(200)
@@ -461,7 +461,7 @@ def manual_eval():
 
 
 if __name__ == '__main__':
-    # train()
+    train()
 
-    manual_eval()
+    # manual_eval()
 
