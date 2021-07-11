@@ -328,7 +328,7 @@ class Net(nn.Module):
         self.full3 = nn.Linear(140, 7)
         self.final = nn.Softmax(dim=1)
 
-        self.dropout = nn.Dropout(0.25)
+        self.dropout = nn.Dropout(0.30)
 
     def forward(self, x):
         x = self.norm1(self.pool(F.relu(self.conv1(x))))
@@ -343,13 +343,13 @@ class Net(nn.Module):
         return x
 
 
-def evaluate(model):
+def evaluate(model, evalset='dev2.csv'):
 
     correct = 0
     total = 0
 
     with torch.no_grad():
-        for data in load_data('dev.csv'):
+        for data in load_data(evalset):
             img, cls = data[0].to(next(model.parameters()).device), data[1].to(next(model.parameters()).device)
 
             got = model(img)
@@ -408,10 +408,11 @@ def train():
 
                 pbar.update(1)
                 if (epoch*len(data)+i) % int(1e2) == 0:
-                    acc = evaluate(net)
-                    pbar.set_description(f'{model_id} | step {epoch*len(data)+i} | loss {loss.item():.3f} | acc {acc*100:.3f}')
+                    mesplit_acc = evaluate(net, 'dev.csv')
+                    privtest_acc = evaluate(net, 'dev2.csv')
+                    pbar.set_description(f'{model_id} | step {epoch*len(data)+i} | loss {loss.item():.3f} | acc {privtest_acc*100:.3f}')
                     if SHOULD_LOG:
-                        wandb.log({'loss': loss, 'acc': acc})
+                        wandb.log({'loss': loss, 'train_holdout_acc': mesplit_acc, 'priv_test_acc': privtest_acc})
                         # writer.add_scalar('loss', loss.item(), epoch*len(data)+i)
                         pass
                     if (epoch*len(data)+i) % int(1e5) == 0:
@@ -433,7 +434,8 @@ def manual_eval():
     net = Net()
     # net.load_state_dict(torch.load(SNAPSHOTS_DIR + 'motherly-loyal-construction_2800.0k.model'))
     # net.load_state_dict(torch.load(SNAPSHOTS_DIR + 'absorbingly-enjoyable-boss_final.model')) # later smaller model
-    net.load_state_dict(torch.load(SNAPSHOTS_DIR + 'insatisfactorily-notable-effort_5000k.model')) # later smaller model
+    # net.load_state_dict(torch.load(SNAPSHOTS_DIR + 'insatisfactorily-notable-effort_5000k.model')) # later smaller model
+    net.load_state_dict(torch.load(SNAPSHOTS_DIR + 'pseudoeducationally-invaluable-entry_500k.model')) # dropout
     # net.to(device)
 
     print(f'network total number of parameters: {sum([math.prod(t.shape) for t in net.parameters()]) / 1e6:.2f}M')
