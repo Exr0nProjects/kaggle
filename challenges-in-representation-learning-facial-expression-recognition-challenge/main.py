@@ -24,7 +24,8 @@ LOGS_DIR = "logs"
 SNAPSHOTS_DIR = "snapshots/"
 EPOCHS = 18000
 BATCH_SIZE = 100
-LEARNING_RATE = 1e-7
+# LEARNING_RATE = 1e-7
+# WEIGHT_DECAY = 1e-8
 SHOULD_LOG = True
 SHOULD_SHOW_FIGURES = False
 
@@ -287,48 +288,23 @@ def load_data(path, batch_size=BATCH_SIZE):
         yield batch
 
 class Net(nn.Module):
-    def __init__(self):
+    def __init__(self, cfg):
         super().__init__()
-        # self.conv1 = nn.Conv2d(1, 10, 5)    # -> 10 x 44x44
-        # self.pool = nn.MaxPool2d(2, 2)      # -> 10 x 22x22;    default stride = kernel_size
-        # self.norm1 = torch.nn.BatchNorm2d(10)
-        # self.conv2 = nn.Conv2d(10, 20, 5)   # -> 20 x 18x18
-        # # pool again                        # -> 20 x 9 x 9
-        # self.norm2 = torch.nn.BatchNorm2d(20)
-        # self.full1 = nn.Linear(20 * 9*9, 120)
-        # self.full2 = nn.Linear(120, 30)
-        # self.full3 = nn.Linear(30, 7)
-        # self.final = nn.Softmax(dim=1)
 
-        # self.conv1 = nn.Conv2d(1, 10, 5)    # -> 20 x 44x44
-        # self.pool = nn.MaxPool2d(2, 2)      # -> 20 x 22x22;    default stride = kernel_size
-        # self.norm1 = torch.nn.BatchNorm2d(10)
-        # self.conv2 = nn.Conv2d(10, 24, 5)   # -> 40 x 18x18
-        # # pool again                        # -> 40 x 9 x 9
-        # self.norm2 = torch.nn.BatchNorm2d(24)
-        # self.full1 = nn.Linear(24 * 9*9, 600)
-        # self.ln1   = nn.LayerNorm(600)
-        # self.full2 = nn.Linear(600, 200)
-        # self.ln2   = nn.LayerNorm(200)
-        # self.full3 = nn.Linear(200, 70)
-        # self.ln3   = nn.LayerNorm(70)
-        # self.full4 = nn.Linear(70, 7)
-        # self.final = nn.Softmax(dim=1)
-
-        self.conv1 = nn.Conv2d(1, 10, 5)    # -> 20 x 44x44
+        self.conv1 = nn.Conv2d(1, cfg.conv1_kernels, 5)    # -> 20 x 44x44
         self.pool = nn.MaxPool2d(2, 2)      # -> 20 x 22x22;    default stride = kernel_size
-        self.norm1 = torch.nn.BatchNorm2d(10)
-        self.conv2 = nn.Conv2d(10, 24, 5)   # -> 40 x 18x18
+        self.norm1 = torch.nn.BatchNorm2d(cfg.conv1_kernels)
+        self.conv2 = nn.Conv2d(cfg.conv1_kernels, cfg.conv2_kernels, 5)   # -> 40 x 18x18
         # pool again                        # -> 40 x 9 x 9
-        self.norm2 = torch.nn.BatchNorm2d(24)
-        self.full1 = nn.Linear(24 * 9*9, 400)
-        self.ln1   = nn.LayerNorm(400)
-        self.full2 = nn.Linear(400, 140)
-        self.ln2   = nn.LayerNorm(140)
-        self.full3 = nn.Linear(140, 7)
+        self.norm2 = torch.nn.BatchNorm2d(cfg.conv2_kernels)
+        self.full1 = nn.Linear(cfg.conv2_kernels * 9*9, cfg.full1_width)
+        self.ln1   = nn.LayerNorm(cfg.full1_width)
+        self.full2 = nn.Linear(cfg.full1_width, cfg.full2_width)
+        self.ln2   = nn.LayerNorm(cfg.full2_width)
+        self.full3 = nn.Linear(cfg.full2_width, 7)
         self.final = nn.Softmax(dim=1)
 
-        self.dropout = nn.Dropout(0.30)
+        self.dropout = nn.Dropout(cfg.dropout)
 
     def forward(self, x):
         x = self.norm1(self.pool(F.relu(self.conv1(x))))
@@ -361,26 +337,27 @@ def evaluate(model, evalset='dev2.csv'):
     return correct / total
 
 def train():
-    model_id = subprocess.run(["witty-phrase-generator"], capture_output=True).stdout.decode('utf-8').strip()
-    wandb.init(project=f'facial expression recognition')
+    # model_id = subprocess.run(["witty-phrase-generator"], capture_output=True).stdout.decode('utf-8').strip()
+    run = wandb.init(project=f'facial expression recognition')
+    model_id = run.name
 
 
     print(f'STARTING RUN {model_id}: pytorch version is {torch.__version__}')
 
-    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     # device = 'cpu'
     print(f'training on device {device} {torch.cuda.get_device_name(torch.cuda.current_device())}')
 
     data = list(load_data('train.csv'))
 
-    net = Net()
+    net = Net(run.config)
     # net.load_state_dict(torch.load(SNAPSHOTS_DIR + 'maximally-individual-girlfriend_final.model'))
     print(net)
     print(f'parameter count: {sum([math.prod(t.shape) for t in net.parameters()])}')
     net.to(device)
 
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(net.parameters(), lr=LEARNING_RATE)
+    optimizer = optim.Adam(net.parameters(), lr=run.config.learning_rate, weight_decay=run.config.weight_decay)
 
     # see class LRFinder for yoink source
     # lr_finder = LRFinder(net, optimizer, device)
@@ -416,8 +393,8 @@ def train():
                         # writer.add_scalar('loss', loss.item(), epoch*len(data)+i)
                         pass
                     if (epoch*len(data)+i) % int(1e5) == 0:
-                        print(f'saved {model_id} after {(epoch*len(data)+i)//1000}k steps at {str(datetime.now())}')
-                        torch.save(net.state_dict(), SNAPSHOTS_DIR + f'{model_id}_{(epoch*len(data)+i)//1000}k.model')
+                        print(f'saved {model_id} after {int((epoch*len(data)+i)//1000)}k steps at {str(datetime.now())}')
+                        torch.save(net.state_dict(), SNAPSHOTS_DIR + f'{model_id}_{int((epoch*len(data)+i)//1000)}k.model')
 
     if SHOULD_LOG:
         pass
