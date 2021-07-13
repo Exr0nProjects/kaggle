@@ -32,8 +32,6 @@ six==1.16.0
 tensorboard==2.5.0
 tensorboard-data-server==0.6.1
 tensorboard-plugin-wit==1.8.0
-torch==1.9.0+cu111
-torchaudio==0.9.0
 torchvision==0.10.0+cu111
 tqdm==4.61.1
 typing-extensions==3.10.0.0
