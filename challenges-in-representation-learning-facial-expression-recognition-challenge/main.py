@@ -22,7 +22,8 @@ DATAPATH = "data/"
 DATA_CLASSES = ( 'angry', 'disgusted', 'afraid', 'happy', 'sad', 'surprised', 'neutral' )
 LOGS_DIR = "logs"
 SNAPSHOTS_DIR = "snapshots/"
-EPOCHS = 18000
+# EPOCHS = 18000
+EPOCHS = 10
 BATCH_SIZE = 100
 # LEARNING_RATE = 1e-7
 # WEIGHT_DECAY = 1e-8
@@ -338,13 +339,14 @@ def evaluate(model, evalset='dev2.csv'):
 
 def train():
     # model_id = subprocess.run(["witty-phrase-generator"], capture_output=True).stdout.decode('utf-8').strip()
-    run = wandb.init(project=f'facial expression recognition')
+    run = wandb.init(project=f'facial federated baseline', entity="exr0nprojects")
     model_id = run.name
 
 
     print(f'STARTING RUN {model_id}: pytorch version is {torch.__version__}')
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    #device = 'cpu'
     # device = 'cpu'
     print(f'training on device {device} {torch.cuda.get_device_name(torch.cuda.current_device())}')
 
@@ -367,6 +369,8 @@ def train():
         wandb.watch(net)
         # writer = SummaryWriter(LOGS_DIR) # TODO: with statement
         pass
+
+    EPOCHS = run.config.epochs
 
     with tqdm(total=EPOCHS*len(data)) as pbar:
         for epoch in range(EPOCHS):

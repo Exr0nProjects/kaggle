@@ -1,4 +1,6 @@
 program: main.py
+project: federated facial baseline
+entity: exr0nprojects
 method: bayes
 metric:
   goal: minimize
@@ -25,6 +27,8 @@ parameters:
   weight_decay:
     min: 1e-11
     max: 1e-5
+  epochs: 
+    value: 2000
 metric:
   name: loss
   goal: minimize
