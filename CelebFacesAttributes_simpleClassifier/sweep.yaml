@@ -28,7 +28,7 @@ parameters:
     min: 1e-11
     max: 1e-5
   epochs: 
-    value: 2000
+    value: 5
   img_dim: 
     value: [178, 218]
 metric:
