@@ -1,5 +1,5 @@
 program: main.py
-project: federated facial baseline
+project: celeba-attractiveness
 entity: exr0nprojects
 method: bayes
 metric:
@@ -29,6 +29,8 @@ parameters:
     max: 1e-5
   epochs: 
     value: 2000
+  img_dim: 
+    value: [178, 218]
 metric:
   name: loss
   goal: minimize

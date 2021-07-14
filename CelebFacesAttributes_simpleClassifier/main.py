@@ -4,12 +4,18 @@ from matplotlib import pyplot as plt
 from matplotlib.lines import Line2D
 import numpy as np
 import torch
+import pandas as pd
+from torchvision.io import read_image
+from torch.utils.data import Dataset, DataLoader
+from torchvision import datasets
+from torchvision.transforms import ToTensor
 from torch import nn, optim
 from torch.nn import functional as F
 from tqdm import tqdm
 
 import wandb
 
+import os
 import random
 import math
 import csv
@@ -243,66 +249,102 @@ CACHED_FILES = {}
 # # END YOINK
 
 
-def load_data(path, batch_size=BATCH_SIZE):
-    def grouper(n, iterable):
-        bad = []
-        for i in iterable:
-            bad.append(i)
-            if len(bad) == n:
-                yield torch.stack(bad)
-                bad = []
-        yield torch.stack(bad)
+# yoinked from https://pytorch.org/tutorials/beginner/basics/data_tutorial.html
+class CelebASingleAttr(Dataset):
+    def __init__(self, img_dir, attr='Attractive', transform=None, target_transform=None):
+        self.attr = attr
+        self.img_labels = pd.read_csv(f"{img_dir}/attr.csv")
+        self.img_dir = img_dir
+        self.transform = transform
+        self.target_transform = target_transform
 
-    if path in CACHED_FILES:
-        data = CACHED_FILES[path]
-    elif Path(DATAPATH + path+'.pkl').exists():
-        print('found cached data; loading it...')
-        with open(DATAPATH + path+'.pkl', 'rb') as rf:
-            data = pickle.load(rf)
-    else:
-        # NTFS: could probably use torchvision.dataloader but meh
-        data_by_class = [[]] * len(DATA_CLASSES)
-        data = [[], []]
-        print('loading data...')
-        with open(DATAPATH + path, 'r') as rf:
-            lines = sum(1 for _ in rf)
-        with open(DATAPATH + path, 'r') as rf:
-            for line in tqdm(csv.DictReader(rf), total=lines):
-                # line = { 'emotion': '0', 'pixels': '10 2 5 9 ...' }
-                cls = int(line['emotion']) # unsafe
-                img = torch.tensor([int(p) for p in line['pixels'].split()],
-                        dtype=torch.float32).reshape((48, 48))
-                img = torch.unsqueeze(img / 256, 0)            # normalize
-                # print(img)
-                # plt.imshow(img)
-                # plt.show()
-                data_by_class[cls].append(img)
-                data[0].append(img)
-                data[1].append(torch.tensor(cls))
+    def __len__(self):
+        return len(self.img_labels)
 
-        print([(DATA_CLASSES[i], len(data_by_class[i])) for i in range(len(DATA_CLASSES))]) # TODO: dataset is extremely unbalanced
-        with open(DATAPATH + path+'.pkl', 'wb+') as wf:
-            pickle.dump(data, wf)
-    CACHED_FILES[path] = data
+    def __getitem__(self, idx):
+        img_path = os.path.join(self.img_dir, self.img_labels.iloc[idx, 0])
+        image = read_image(img_path)                                # TODO: do it correctly and use transformations
+        image = image.to(torch.float32) / 255
+        label = max(self.img_labels.iloc[idx].loc[self.attr], 0)     # convert {-1, 1} to {0, 1}
+        if self.transform:
+            image = self.transform(image)
+        if self.target_transform:
+            label = self.target_transform(label)
+        return image, label
 
-    for batch in zip(grouper(batch_size, data[0]), grouper(batch_size, data[1])):
-        yield batch
+# def load_data(path, batch_size=BATCH_SIZE):
+#     def grouper(n, iterable):
+#         bad = []
+#         for i in iterable:
+#             bad.append(i)
+#             if len(bad) == n:
+#                 yield torch.stack(bad)
+#                 bad = []
+#         yield torch.stack(bad)
+#
+#     if path in CACHED_FILES:
+#         data = CACHED_FILES[path]
+#     elif Path(DATAPATH + path+'.pkl').exists():
+#         print('found cached data; loading it...')
+#         with open(DATAPATH + path+'.pkl', 'rb') as rf:
+#             data = pickle.load(rf)
+#     else:
+#         # NTFS: could probably use torchvision.dataloader but meh
+#         data_by_class = [[]] * len(DATA_CLASSES)
+#         data = [[], []]
+#         print('loading data...')
+#         with open(DATAPATH + path, 'r') as rf:
+#             lines = sum(1 for _ in rf)
+#         with open(DATAPATH + path, 'r') as rf:
+#             for line in tqdm(csv.DictReader(rf), total=lines):
+#                 # line = { 'emotion': '0', 'pixels': '10 2 5 9 ...' }
+#                 cls = int(line['emotion']) # unsafe
+#                 img = torch.tensor([int(p) for p in line['pixels'].split()],
+#                         dtype=torch.float32).reshape((48, 48))
+#                 img = torch.unsqueeze(img / 256, 0)            # normalize
+#                 # print(img)
+#                 # plt.imshow(img)
+#                 # plt.show()
+#                 data_by_class[cls].append(img)
+#                 data[0].append(img)
+#                 data[1].append(torch.tensor(cls))
+#
+#         print([(DATA_CLASSES[i], len(data_by_class[i])) for i in range(len(DATA_CLASSES))]) # TODO: dataset is extremely unbalanced
+#         with open(DATAPATH + path+'.pkl', 'wb+') as wf:
+#             pickle.dump(data, wf)
+#     CACHED_FILES[path] = data
+#
+#     for batch in zip(grouper(batch_size, data[0]), grouper(batch_size, data[1])):
+#         yield batch
+
+def load_data(split: str):
+    # https://pytorch.org/tutorials/beginner/data_loading_tutorial.html
+    assert(split in ['train', 'dev', 'test'])
+
+    dataset = CelebASingleAttr(DATAPATH + split)
+    ret = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=4)
+    with open(DATAPATH + split + '/attr.csv', 'r') as rf:
+        ret.len = sum(1 for row in rf) -1
+    return ret
 
 class Net(nn.Module):
     def __init__(self, cfg):
         super().__init__()
 
-        self.conv1 = nn.Conv2d(1, cfg.conv1_kernels, 5)    # -> 20 x 44x44
+        input_dims = torch.tensor(cfg.img_dim)
+
+        self.conv1 = nn.Conv2d(3, cfg.conv1_kernels, 5)    # -> 20 x 44x44
         self.pool = nn.MaxPool2d(2, 2)      # -> 20 x 22x22;    default stride = kernel_size
         self.norm1 = torch.nn.BatchNorm2d(cfg.conv1_kernels)
         self.conv2 = nn.Conv2d(cfg.conv1_kernels, cfg.conv2_kernels, 5)   # -> 40 x 18x18
         # pool again                        # -> 40 x 9 x 9
         self.norm2 = torch.nn.BatchNorm2d(cfg.conv2_kernels)
-        self.full1 = nn.Linear(cfg.conv2_kernels * 9*9, cfg.full1_width)
+        input_dims = ((input_dims - 4) / 2 - 4) / 2
+        self.full1 = nn.Linear(cfg.conv2_kernels * int(input_dims.prod().round().item()), cfg.full1_width)
         self.ln1   = nn.LayerNorm(cfg.full1_width)
         self.full2 = nn.Linear(cfg.full1_width, cfg.full2_width)
         self.ln2   = nn.LayerNorm(cfg.full2_width)
-        self.full3 = nn.Linear(cfg.full2_width, 7)
+        self.full3 = nn.Linear(cfg.full2_width, len(DATA_CLASSES))
         self.final = nn.Softmax(dim=1)
 
         self.dropout = nn.Dropout(cfg.dropout)
@@ -320,7 +362,7 @@ class Net(nn.Module):
         return x
 
 
-def evaluate(model, evalset='dev2.csv'):
+def evaluate(model, evalset='test'):
 
     correct = 0
     total = 0
@@ -339,7 +381,7 @@ def evaluate(model, evalset='dev2.csv'):
 
 def train():
     # model_id = subprocess.run(["witty-phrase-generator"], capture_output=True).stdout.decode('utf-8').strip()
-    run = wandb.init(project=f'facial federated baseline', entity="exr0nprojects")
+    run = wandb.init(project=f'CelebA Attractiveness', entity="exr0nprojects")
     model_id = run.name
 
 
@@ -350,12 +392,14 @@ def train():
     # device = 'cpu'
     print(f'training on device {device} {torch.cuda.get_device_name(torch.cuda.current_device())}')
 
-    data = list(load_data('train.csv'))
+    data = load_data('train')
+
+    print('data loaded')
 
     net = Net(run.config)
     # net.load_state_dict(torch.load(SNAPSHOTS_DIR + 'maximally-individual-girlfriend_final.model'))
     print(net)
-    print(f'parameter count: {sum([math.prod(t.shape) for t in net.parameters()])}')
+    print(f'net loaded. parameter count: {sum([math.prod(t.shape) for t in net.parameters()])}')
     net.to(device)
 
     criterion = nn.CrossEntropyLoss()
@@ -372,7 +416,9 @@ def train():
 
     EPOCHS = run.config.epochs
 
-    with tqdm(total=EPOCHS*len(data)) as pbar:
+    print('all components locked and loaded. beginning train loop...')
+
+    with tqdm(total=EPOCHS*data.len) as pbar:
         for epoch in range(EPOCHS):
             for i, samp in enumerate(data):
                 img, cls = samp[0].to(device), samp[1].to(device)
@@ -388,17 +434,17 @@ def train():
                 optimizer.step()
 
                 pbar.update(1)
-                if (epoch*len(data)+i) % int(1e2) == 0:
-                    mesplit_acc = evaluate(net, 'dev.csv')
-                    privtest_acc = evaluate(net, 'dev2.csv')
-                    pbar.set_description(f'{model_id} | step {epoch*len(data)+i} | loss {loss.item():.3f} | acc {privtest_acc*100:.3f}')
+                if (epoch*data.len+i) % int(1e2) == 0:
+                    mesplit_acc = evaluate(net, 'dev')
+                    privtest_acc = evaluate(net, 'test')
+                    pbar.set_description(f'{model_id} | step {epoch*data.len+i} | loss {loss.item():.3f} | acc {privtest_acc*100:.3f}')
                     if SHOULD_LOG:
                         wandb.log({'loss': loss, 'train_holdout_acc': mesplit_acc, 'priv_test_acc': privtest_acc})
-                        # writer.add_scalar('loss', loss.item(), epoch*len(data)+i)
+                        # writer.add_scalar('loss', loss.item(), epoch*data.len+i)
                         pass
-                    if (epoch*len(data)+i) % int(1e5) == 0:
-                        print(f'saved {model_id} after {int((epoch*len(data)+i)//1000)}k steps at {str(datetime.now())}')
-                        torch.save(net.state_dict(), SNAPSHOTS_DIR + f'{model_id}_{int((epoch*len(data)+i)//1000)}k.model')
+                    if (epoch*data.len+i) % int(1e5) == 0:
+                        print(f'saved {model_id} after {int((epoch*data.len+i)//1000)}k steps at {str(datetime.now())}')
+                        torch.save(net.state_dict(), SNAPSHOTS_DIR + f'{model_id}_{int((epoch*data.len+i)//1000)}k.model')
 
     if SHOULD_LOG:
         pass
@@ -409,7 +455,7 @@ def train():
     print(f'final accuarcy was {evaluate(net)*100:.4f}%')
 
 def manual_eval():
-    data = list(load_data('test2.csv', batch_size=4))
+    data = list(load_data('test', batch_size=4))
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
     net = Net()
@@ -423,8 +469,8 @@ def manual_eval():
 
     # print(data[:10])
 
-    cls_cnt = torch.zeros((7,))
-    cls_correct_cnt = torch.zeros((7,))
+    cls_cnt = torch.zeros((len(DATA_CLASSES),))
+    cls_correct_cnt = torch.zeros((len(DATA_CLASSES),))
     for b_img, b_cls in data:
         for cls in b_cls:
             cls_cnt[cls] += 1
@@ -463,6 +509,8 @@ def manual_eval():
 
 
 if __name__ == '__main__':
+    torch.multiprocessing.set_sharing_strategy('file_system')   # TODO: wut
+    # load_data('dev')
     train()
 
     # manual_eval()
