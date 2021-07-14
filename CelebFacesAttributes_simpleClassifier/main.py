@@ -23,6 +23,7 @@ import pickle
 import subprocess
 from datetime import datetime
 from pathlib import Path
+from itertools import islice
 
 DATAPATH = "data/"
 DATA_CLASSES = ( 'not', 'hot' )
@@ -30,7 +31,7 @@ LOGS_DIR = "logs"
 SNAPSHOTS_DIR = "snapshots/"
 # EPOCHS = 18000
 EPOCHS = 10
-BATCH_SIZE = 100
+BATCH_SIZE = 50
 # LEARNING_RATE = 1e-7
 # WEIGHT_DECAY = 1e-8
 SHOULD_LOG = True
@@ -251,7 +252,8 @@ CACHED_FILES = {}
 
 # yoinked from https://pytorch.org/tutorials/beginner/basics/data_tutorial.html
 class CelebASingleAttr(Dataset):
-    def __init__(self, img_dir, attr='Attractive', transform=None, target_transform=None):
+    def __init__(self, img_dir, attr='Attractive', transform=None, target_transform=None, num=None):
+        self.num = num
         self.attr = attr
         self.img_labels = pd.read_csv(f"{img_dir}/attr.csv")
         self.img_dir = img_dir
@@ -259,7 +261,10 @@ class CelebASingleAttr(Dataset):
         self.target_transform = target_transform
 
     def __len__(self):
-        return len(self.img_labels)
+        if self.num is None:
+            return len(self.img_labels)
+        else:
+            return self.num
 
     def __getitem__(self, idx):
         img_path = os.path.join(self.img_dir, self.img_labels.iloc[idx, 0])
@@ -317,11 +322,11 @@ class CelebASingleAttr(Dataset):
 #     for batch in zip(grouper(batch_size, data[0]), grouper(batch_size, data[1])):
 #         yield batch
 
-def load_data(split: str):
+def load_data(split: str, num=None):
     # https://pytorch.org/tutorials/beginner/data_loading_tutorial.html
     assert(split in ['train', 'dev', 'test'])
 
-    dataset = CelebASingleAttr(DATAPATH + split)
+    dataset = CelebASingleAttr(DATAPATH + split, num=num)
     ret = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=4)
     with open(DATAPATH + split + '/attr.csv', 'r') as rf:
         ret.len = sum(1 for row in rf) -1
@@ -333,13 +338,14 @@ class Net(nn.Module):
 
         input_dims = torch.tensor(cfg.img_dim)
 
-        self.conv1 = nn.Conv2d(3, cfg.conv1_kernels, 5)    # -> 20 x 44x44
+        self.conv1 = nn.Conv2d(3, cfg.conv1_kernels, 21)
         self.pool = nn.MaxPool2d(2, 2)      # -> 20 x 22x22;    default stride = kernel_size
         self.norm1 = torch.nn.BatchNorm2d(cfg.conv1_kernels)
-        self.conv2 = nn.Conv2d(cfg.conv1_kernels, cfg.conv2_kernels, 5)   # -> 40 x 18x18
+        self.conv2 = nn.Conv2d(cfg.conv1_kernels, cfg.conv2_kernels, 6)   # -> 40 x 18x18
         # pool again                        # -> 40 x 9 x 9
         self.norm2 = torch.nn.BatchNorm2d(cfg.conv2_kernels)
-        input_dims = ((input_dims - 4) / 2 - 4) / 2
+        input_dims = ((input_dims - 20) / 2 - 5) / 2
+        print('calculated final conv output size to be', input_dims)
         self.full1 = nn.Linear(cfg.conv2_kernels * int(input_dims.prod().round().item()), cfg.full1_width)
         self.ln1   = nn.LayerNorm(cfg.full1_width)
         self.full2 = nn.Linear(cfg.full1_width, cfg.full2_width)
@@ -368,7 +374,7 @@ def evaluate(model, evalset='test'):
     total = 0
 
     with torch.no_grad():
-        for data in load_data(evalset):
+        for data in load_data(evalset, num=30):
             img, cls = data[0].to(next(model.parameters()).device), data[1].to(next(model.parameters()).device)
 
             got = model(img)
